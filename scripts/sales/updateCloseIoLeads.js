@@ -2,6 +2,7 @@
 
 'use strict';
 if (process.argv.length !== 11) {
+  console.log(`Incorrect number of arguments supplied (gave ${process.argv.length}, needs 11)`);
   log("Usage: node <script> <Close.io general API key> <Close.io mail API key1> <Close.io mail API key2> <Close.io mail API key3> <Close.io mail API key4> <Close.io mail API key5> <Close.io EU mail API key> <Intercom 'App ID:API key'> <mongo connection Url>");
   process.exit();
 }
@@ -368,6 +369,12 @@ function findCocoContacts(done) {
         const userEmailMap = {};
         for (const user of users) {
           const email = user.emailLower;
+          if (user.hourOfCode && contacts[email].trialRequest.properties.siteOrigin === 'create teacher') {
+            // Don't process HoC teachers (without demo requests) at all; we'll message them later
+            console.log("Ignoring HourOfCode teacher account:", email);
+            delete contacts[email]
+            continue
+          }
           contacts[email].addUser(user);
           userIDs.push(user._id);
           userContactMap[user._id.valueOf()] = contacts[email];
