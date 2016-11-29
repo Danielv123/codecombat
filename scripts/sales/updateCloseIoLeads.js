@@ -1,8 +1,8 @@
 // Upsert new lead data into Close.io
 
 'use strict';
-if (process.argv.length !== 11) {
-  log("Usage: node <script> <Close.io general API key> <Close.io mail API key1> <Close.io mail API key2> <Close.io mail API key3> <Close.io mail API key4> <Close.io mail API key5> <Close.io EU mail API key> <Intercom 'App ID:API key'> <mongo connection Url>");
+if (process.argv.length !== 12) {
+  log("Usage: node <script> <ZenProspect Auth Token> <Close.io general API key> <Close.io mail API key1> <Close.io mail API key2> <Close.io mail API key3> <Close.io mail API key4> <Close.io mail API key5> <Close.io EU mail API key> <Intercom 'App ID:API key'> <mongo connection Url>");
   process.exit();
 }
 
@@ -59,42 +59,47 @@ const closeParallelLimit = 10;
 const intercomParallelLimit = 100;
 
 const scriptStartTime = new Date();
-const closeIoApiKey = process.argv[2]; // Matt
+const zpAuthToken = process.argv[2];
+const closeIoApiKey = process.argv[3]; // Matt
 // Automatic mails sent as API owners, first key assumed to be primary and gets 50% of the leads
 // Names in comments are for reference, but Source of Truth is updateSalesLeads.sh on the analytics server
 const closeIoMailApiKeys = [
   {
-    apiKey: process.argv[3], // Lisa
+    apiKey: process.argv[4], // Lisa
     weight: .75
   },
   {
-    apiKey: process.argv[4], // Elliot
+    apiKey: process.argv[5], // Elliot
     weight: .1
   },
   {
-    apiKey: process.argv[5], // Nolan
+    apiKey: process.argv[6], // Nolan
     weight: .05
   },
   {
-    apiKey: process.argv[6], // Sean
+    apiKey: process.argv[7], // Sean
     weight: .05
   },
   {
-    apiKey: process.argv[7], // Liz
+    apiKey: process.argv[8], // Liz
     weight: .05
   },
 ];
-const closeIoEuMailApiKey = process.argv[8]; // Jurian
-const intercomAppIdApiKey = process.argv[9];
+const closeIoEuMailApiKey = process.argv[9]; // Jurian
+const intercomAppIdApiKey = process.argv[10];
 const intercomAppId = intercomAppIdApiKey.split(':')[0];
 const intercomApiKey = intercomAppIdApiKey.split(':')[1];
-const mongoConnUrl = process.argv[10];
+const mongoConnUrl = process.argv[11];
 const MongoClient = require('mongodb').MongoClient;
 const async = require('async');
 const countryData = require('country-data');
 const countryList = require('country-list')();
 const parseDomain = require('parse-domain');
 const request = require('request');
+
+require('coffee-script/register');
+const ZenProspect = require('./lib/ZenProspect');
+ZenProspect.configure({ authToken: zpAuthToken })
 
 const earliestDate = new Date();
 earliestDate.setUTCDate(earliestDate.getUTCDate() - 10);
@@ -351,6 +356,31 @@ function findCocoContacts(done) {
           continue;
         }
         contacts[email] = new CocoContact(email, trialRequest);
+
+        ZenProspect.Contacts.searchAsync(email).then((zpContacts) => {
+          if(zpContacts.length === 0) {
+            const zpContact = new ZenProspect.Contact({
+              first_name: trialRequest.properties.firstName,
+              last_name: trialRequest.properties.lastName,
+              email: trialRequest.properties.email,
+              source: 'ui_form',
+              contact_stage_id: ZenProspect.stageIds['Do Not Contact'],
+            })
+            zpContact.save().then((res) => {
+              console.log(`Saved a new ZP contact: ${zpContact.get('email')} (${zpContact.get('id')})`)
+            })
+          } else {
+            zpContacts.forEach((zpContact) => {
+              console.log(zpContact);
+              if(zpContact.get('contact_stage').name === 'Cold') {
+                zpContact.update({ contact_stage_id: ZenProspect.stageIds['Do Not Contact'] })
+                console.log(`Marked ZP contact as 'Do Not Contact': ${zpContact.get('email')} (${zpContact.get('id')})`)
+              }
+            })
+          }
+        }).catch((err)=>{
+          console.log(err);
+        })
       }
 
       // Users for trial requests
