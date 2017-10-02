@@ -15,6 +15,7 @@ Course = require 'models/Course'
 Level = require 'models/Level'
 LevelFeedback = require 'models/LevelFeedback'
 storage = require 'core/storage'
+SubscribeModal = require 'views/core/SubscribeModal'
 
 module.exports = class HeroVictoryModal extends ModalView
   id: 'hero-victory-modal'
@@ -34,6 +35,7 @@ module.exports = class HeroVictoryModal extends ModalView
     'click .continue-from-offer-button': 'onClickContinueFromOffer'
     'click .skip-offer-button': 'onClickSkipOffer'
     'click #share-level-btn': 'onClickShareLevelButton'
+    'click .subscribe-button': 'onSubscribeButtonClicked'
 
     # Feedback events
     'mouseover .rating i': (e) -> @showStars(@starNum($(e.target)))
@@ -120,7 +122,7 @@ module.exports = class HeroVictoryModal extends ModalView
       thangType = new ThangType()
       thangType.url = "/db/thang.type/#{thangTypeOriginal}/version"
       #thangType.project = ['original', 'rasterIcon', 'name', 'soundTriggers', 'i18n']  # This is what we need, but the PlayHeroesModal needs more, and so we load more to fill up the supermodel.
-      thangType.project = ['original', 'rasterIcon', 'name', 'slug', 'soundTriggers', 'featureImages', 'gems', 'heroClass', 'description', 'components', 'extendedName', 'unlockLevelName', 'i18n']
+      thangType.project = ['original', 'rasterIcon', 'name', 'slug', 'soundTriggers', 'featureImages', 'gems', 'heroClass', 'description', 'components', 'extendedName', 'unlockLevelName', 'i18n', 'subscriber']
       @thangTypes[thangTypeOriginal] = @supermodel.loadModel(thangType).model
 
     @newEarnedAchievements = []
@@ -195,15 +197,21 @@ module.exports = class HeroVictoryModal extends ModalView
     elapsed = (new Date() - new Date(me.get('dateCreated')))
     if me.get 'hourOfCode'
       # Show the Hour of Code "I'm Done" tracking pixel after they played for 20 minutes
-      gameDevHoc = storage.load('should-return-to-game-dev-hoc')
-      lastLevelOriginal = if gameDevHoc then '57ee6f5786cf4e1f00afca2c' else '541c9a30c6362edfb0f34479'
+      gameDevHoc = application.getHocCampaign()
+      lastLevelOriginal = switch gameDevHoc
+        when 'game-dev-hoc' then '57ee6f5786cf4e1f00afca2c' # game grove 
+        when 'game-dev-hoc-2' then '57b71dce7a14ff35003a8f71' # palimpsest
+        else '541c9a30c6362edfb0f34479' # kithgard gates for dungeon
       lastLevel = @level.get('original') is lastLevelOriginal # hoc2016 or kithgard-gates
       enough = elapsed >= 20 * 60 * 1000 or lastLevel
       tooMuch = elapsed > 120 * 60 * 1000
       showDone = (elapsed >= 30 * 60 * 1000 and not tooMuch) or lastLevel
       if enough and not tooMuch and not me.get('hourOfCodeComplete')
-        pixelCode = if gameDevHoc then 'code_combat_gamedev' else 'code_combat'
-        $('body').append($("<img src='http://code.org/api/hour/finish_#{pixelCode}.png' style='visibility: hidden;'>"))
+        pixelCode = switch gameDevHoc
+          when 'game-dev-hoc' then 'code_combat_gamedev'
+          when 'game-dev-hoc-2' then 'code_combat_gamedev2'
+          else 'code_combat'
+        $('body').append($("<img src='https://code.org/api/hour/finish_#{pixelCode}.png' style='visibility: hidden;'>"))
         me.set 'hourOfCodeComplete', true
         me.patch()
         window.tracker?.trackEvent 'Hour of Code Finish'
@@ -411,22 +419,13 @@ module.exports = class HeroVictoryModal extends ModalView
       AudioPlayer.playSound name, 1
 
   getNextLevelCampaign: ->
-    # Much easier to just keep this updated than to dynamically figure it out.
-    # TODO: only go back to world selector if any beta campaigns are incomplete
-    campaign = {
-      'kithgard-gates': '',
-      'kithgard-mastery': '',
-      'tabula-rasa': '',
-      'wanted-poster': '',
-      'siege-of-stonehold': '',
-      'go-fetch': '',
-      'palimpsest': '',
-      'quizlet': '',
-      'clash-of-clones': 'mountain',
-      'summits-gate': 'glacier'
-    }[@level.get('slug')] ? @level.get 'campaign'
-    # Return to game-dev-hoc instead if we're in that mode, since the levels don't realize they can be in that copycat campaign
-    campaign = 'game-dev-hoc' if (campaign is 'dungeon' or @level.get('slug') in ['kithgard-gates', 'game-grove']) and storage.load('should-return-to-game-dev-hoc')
+    campaign = @level.get 'campaign'
+    if @level.get('slug') in campaignEndLevels
+      campaign = ''  # Return to campaign selector
+    gdHocLevels = ['kithgard-gates', 'over-the-garden-wall', 'vorpal-mouse', 'forest-incursion', 'them-bones', 'behavior-driven-development', 'seeing-is-believing', 'persistence-pays', 'game-grove']
+    if application.getHocCampaign()
+      # Return to game-dev-hoc instead if we're in that mode, since the levels don't realize they can be in that copycat campaign
+      campaign = application.getHocCampaign()
     campaign
 
   getNextLevelLink: (returnToCourse=false) ->
@@ -452,19 +451,19 @@ module.exports = class HeroVictoryModal extends ModalView
     if @showHoc2016ExploreButton
       # Send players to /play after completing final game-dev activity project level
       nextLevelLink = '/play'
-      viewClass = require 'views/play/CampaignView'
+      viewClass = 'views/play/CampaignView'
       viewArgs = [options]
     else if @level.isType('course') and @nextLevel and not options.returnToCourse
-      viewClass = require 'views/play/level/PlayLevelView'
+      viewClass = 'views/play/level/PlayLevelView'
       options.courseID = @courseID
       options.courseInstanceID = @courseInstanceID
       viewArgs = [options, @nextLevel.get('slug')]
     else if @level.isType('course')
       # TODO: shouldn't set viewClass and route in different places
-      viewClass = require 'views/courses/CoursesView'
+      viewClass = 'views/courses/CoursesView'
       viewArgs = [options]
       if @courseID
-        viewClass = require 'views/courses/CourseDetailsView'
+        viewClass = 'views/courses/CourseDetailsView'
         viewArgs.push @courseID
         viewArgs.push @courseInstanceID if @courseInstanceID
     else if @level.isType('course-ladder')
@@ -475,7 +474,9 @@ module.exports = class HeroVictoryModal extends ModalView
       viewArgs = [options, @level.get('slug')]
       viewArgs = viewArgs.concat ['course', leagueID] if leagueID
     else
-      viewClass = require 'views/play/CampaignView'
+      if @level.get('slug') in campaignEndLevels
+        options.worldComplete = @level.get('campaign') or true
+      viewClass = 'views/play/CampaignView'
       viewArgs = [options, @getNextLevelCampaign()]
     navigationEvent = route: nextLevelLink, viewClass: viewClass, viewArgs: viewArgs
     if @level.get('slug') is 'lost-viking' and not (me.get('age') in ['0-13', '14-17'])
@@ -517,6 +518,9 @@ module.exports = class HeroVictoryModal extends ModalView
     @$('#share-level-input').val(@shareURL).select()
     @tryCopy()
 
+  onSubscribeButtonClicked: ->
+    @openModalView new SubscribeModal()
+
   # Ratings and reviews
 
   starNum: (starEl) -> starEl.prevAll('i').length + 1
@@ -538,3 +542,18 @@ module.exports = class HeroVictoryModal extends ModalView
   saveReview: ->
     @feedback.set('review', @$el.find('.review textarea').val())
     @feedback.save()
+
+
+# Much easier to just keep this updated than to dynamically figure it out.
+campaignEndLevels = [
+  'kithgard-gates'
+  'kithgard-mastery'
+  'tabula-rasa'
+  'wanted-poster'
+  'siege-of-stonehold'
+  'go-fetch'
+  'palimpsest'
+  'quizlet'
+  'clash-of-clones'
+  'summits-gate'
+]

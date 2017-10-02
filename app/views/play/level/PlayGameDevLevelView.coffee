@@ -14,6 +14,9 @@ utils = require 'core/utils'
 urls = require 'core/urls'
 Course = require 'models/Course'
 GameDevVictoryModal = require './modal/GameDevVictoryModal'
+GameDevTrackView = require './GameDevTrackView'
+
+require 'game-libraries'
 
 TEAM = 'humans'
 
@@ -44,6 +47,7 @@ module.exports = class PlayGameDevLevelView extends RootView
     @session = new LevelSession()
     @gameUIState = new GameUIState()
     @courseID = @getQueryVariable 'course'
+    @courseInstanceID = @getQueryVariable 'course-instance'
     @god = new God({ @gameUIState, indefiniteLength: true })
     @levelLoader = new LevelLoader({ @supermodel, @levelID, @sessionID, observing: true, team: TEAM, @courseID })
     @supermodel.setMaxProgress 1 # Hack, why are we setting this to 0.2 in LevelLoader?
@@ -109,6 +113,7 @@ module.exports = class PlayGameDevLevelView extends RootView
         levelSlug: @level.get('slug')
       }
       window.tracker?.trackEvent 'Play GameDev Level - Load', @eventProperties, ['Mixpanel']
+      @insertSubView new GameDevTrackView {} if @level.isType('game-dev')
       @god.createWorld(@spells, false, false, true)
 
     .catch (e) =>
@@ -118,6 +123,8 @@ module.exports = class PlayGameDevLevelView extends RootView
   onEditLevelButton: ->
     viewClass = 'views/play/level/PlayLevelView'
     route = "/play/level/#{@level.get('slug')}"
+    if @courseID and @courseInstanceID
+      route += "?course=#{@courseID}&course-instance=#{@courseInstanceID}"
     Backbone.Mediator.publish 'router:navigate', {
       route, viewClass
       viewArgs: [{}, @levelID]

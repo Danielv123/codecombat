@@ -73,7 +73,7 @@ module.exports = {
     }, attrs)
     
     if sources.prepaid and not attrs.coursePrepaid
-      attrs.coursePrepaid = sources.prepaid.pick('_id', 'startDate', 'endDate')
+      attrs.coursePrepaid = sources.prepaid.pick('_id', 'startDate', 'endDate', 'type', 'includedCourseIDs')
     
     return new User(attrs)
   
@@ -114,6 +114,7 @@ module.exports = {
     attrs = _.extend({}, {
       level:
         original: level.get('original'),
+        majorVersion: 1
       creator: creator.id,
     }, attrs)
     attrs.level.primerLanguage = level.get('primerLanguage') if level.get('primerLanguage')

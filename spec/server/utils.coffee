@@ -13,7 +13,7 @@ LevelSession = require '../../server/models/LevelSession'
 Achievement = require '../../server/models/Achievement'
 Campaign = require '../../server/models/Campaign'
 Product = require '../../server/models/Product'
-{ productStubs } = require '../../server/routes/db/product'
+{ productStubs } = require '../../server/middleware/products'
 Course = require '../../server/models/Course'
 Prepaid = require '../../server/models/Prepaid'
 Payment = require '../../server/models/Payment'
@@ -22,6 +22,7 @@ CourseInstance = require '../../server/models/CourseInstance'
 moment = require 'moment'
 Classroom = require '../../server/models/Classroom'
 TrialRequest = require '../../server/models/TrialRequest'
+APIClient = require '../../server/models/APIClient'
 campaignSchema = require '../../app/schemas/models/campaign.schema'
 campaignLevelProperties = _.keys(campaignSchema.properties.levels.additionalProperties.properties)
 campaignAdjacentCampaignProperties = _.keys(campaignSchema.properties.adjacentCampaigns.additionalProperties.properties)
@@ -29,6 +30,7 @@ campaignAdjacentCampaignProperties = _.keys(campaignSchema.properties.adjacentCa
 module.exports = mw =
   getURL: (path) -> 'http://localhost:3001' + path
 
+  getUrl: (path) -> 'http://localhost:3001' + path
   clearModels: Promise.promisify (models, done) ->
     funcs = []
     for model in models
@@ -91,9 +93,17 @@ module.exports = mw =
     request.post mw.getURL('/auth/logout'), done
 
   wrap: (gen) ->
+    arity = gen.length
     fn = co.wrap(gen)
     return (done) ->
-      fn.apply(@, [done]).catch (err) -> done.fail(err)
+      # Run the wrapped, Promise returning test function
+      fn.apply(@, if arity is 0 then [] else [done])
+      
+      # Finish the test if it doesn't include a 'done' argument
+      .then -> done() if arity is 0
+        
+      # Fail on runtime error
+      .catch (err) -> done.fail(err)
 
   makeLevel: Promise.promisify (data, sources, done) ->
     args = Array.from(arguments)
@@ -231,14 +241,19 @@ module.exports = mw =
   makeCampaign: Promise.promisify (data, sources, done) ->
     args = Array.from(arguments)
     [done, [data, sources]] = [args.pop(), args]
+    
+    unless mw.lastLogin?.isAdmin()
+      # TODO: Make this function transparently turn into an admin if necessary
+      done("Must be logged in as an admin to create a campaign")
 
     data = _.extend({}, {
       name: _.uniqueId('Campaign ')
     }, data)
     if not data.levels
       data.levels = {}
-      for level in sources?.levels or []
+      for level, i in sources?.levels or []
         data.levels[level.get('original').valueOf()] = _.pick level.toObject(), campaignLevelProperties
+        data.levels[level.get('original').valueOf()].position = {x: i, y: i}
 
     if not data.adjacentCampaigns
       data.adjacentCampaigns = {}
@@ -249,10 +264,15 @@ module.exports = mw =
       return done(err) if err
       Campaign.findById(res.body._id).exec done
 
-  makeCourse: (data={}, sources={}) ->
+  makeCourse: (data={}, sources={}) -> co ->
 
     if sources.campaign and not data.campaignID
       data.campaignID = sources.campaign._id
+      
+    # need a Campaign since logic depends on its existence
+    if not data.campaignID
+      campaign = yield mw.makeCampaign()
+      data.campaignID = campaign._id
 
     data = _.extend({}, {
       name: _.uniqueId('Course ')
@@ -262,7 +282,8 @@ module.exports = mw =
     }, data)
 
     course = new Course(data)
-    return course.save()
+    yield course.save()
+    return course
 
   makePrepaid: Promise.promisify (data, sources, done) ->
     args = Array.from(arguments)
@@ -276,6 +297,15 @@ module.exports = mw =
     }, data)
 
     request.post { uri: getURL('/db/prepaid'), json: data }, (err, res) ->
+      return done(err) if err
+      expect(res.statusCode).toBe(201)
+      Prepaid.findById(res.body._id).exec done
+  
+  addJoinerToPrepaid: Promise.promisify (prepaid, joiner, done) ->
+    data = {
+      userID: joiner?.id or joiner
+    }
+    request.post { uri: getURL("/db/prepaid/#{prepaid.id}/joiners"), method: 'POST', json: data }, (err, res) ->
       return done(err) if err
       expect(res.statusCode).toBe(201)
       Prepaid.findById(res.body._id).exec done
@@ -300,6 +330,17 @@ module.exports = mw =
       classroom.set('members', _.map(sources.members, '_id'))
       yield classroom.save()
     return classroom
+    
+  makeAPIClient: (data={}, sources={}) -> co ->
+    data = _.extend({}, {
+      name: _.uniqueId('API Client ')
+    }, data)
+
+    client = new APIClient(data)
+    client.secret = client.setNewSecret()
+    client.auth = { user: client.id, pass: client.secret }
+    yield client.save()
+    return client
 
   makeCourseInstance: (data={}, sources={}) -> co ->
     if sources.course and not data.courseID

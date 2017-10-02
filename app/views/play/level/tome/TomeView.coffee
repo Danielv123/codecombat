@@ -46,7 +46,7 @@ module.exports = class TomeView extends CocoView
 
   constructor: (options) ->
     super options
-    unless options.god
+    unless options.god or options.level.get('type') is 'web-dev'
       console.error "TomeView created with no God!"
 
   afterRender: ->
@@ -129,6 +129,7 @@ module.exports = class TomeView extends CocoView
           level: @options.level
           god: @options.god
           courseID: @options.courseID
+          courseInstanceID: @options.courseInstanceID
 
     for thangID, spellKeys of @thangSpells
       thang = @fakeProgrammableThang ? world.getThangByID thangID
@@ -175,7 +176,8 @@ module.exports = class TomeView extends CocoView
       submissionCount: sessionState.submissionCount ? 0,
       flagHistory: sessionState.flagHistory ? [],
       god: @options.god,
-      fixedSeed: @options.fixedSeed
+      fixedSeed: @options.fixedSeed,
+      keyValueDb: @options.session.get('keyValueDb') ? {}
     }
 
   onClick: (e) ->

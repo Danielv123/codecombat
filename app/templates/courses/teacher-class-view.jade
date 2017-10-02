@@ -18,10 +18,24 @@ block content
   if classroom.loaded
     .container
       +breadcrumbs
+      div#classes-nag-subview
       if classroom.get('archived')
         .row.center-block.text-center.m-t-3.m-b-3
           .unarchive-btn.btn.btn-lg.btn-navy
             span(data-i18n='teacher.unarchive_this_class')
+      
+      - var today = new Date()
+      - var created = classroom.created()
+      - var elapsed = today.getTime()-created.getTime()
+      
+      if (elapsed/(1000*60*60*24) > 180)
+        .update-class
+          .alert.alert-info.text-center
+            strong(data-i18n='courses.update_old_classroom') 
+            .small-details
+              span.spr(data-i18n='courses.update_old_classroom_detail')
+              a(data-i18n="courses.teacher_dashboard" href="/teachers/")
+              span.spl(data-i18n="courses.update_old_classroom_detail_2") 
 
       h3.m-t-2= classroom.get('name')
       a.label.edit-classroom(data-classroom-id=classroom.id)
@@ -39,7 +53,7 @@ block content
             span= classroom.capitalLanguage
 
           .student-count.small-details
-            span(data-i18n='teacher.students')
+            span(data-i18n='courses.students')
             span.spr :
             span= classroom.get('members').length
 
@@ -103,7 +117,7 @@ block content
 
         .adding-students.col-md-5
           h4.m-b-2
-            span(data-i18n='teacher.add_students')
+            span(data-i18n='courses.add_students')
             span :
           +copyCodes
           +addStudentsButton
@@ -113,7 +127,7 @@ block content
           - var activeTab = state.get('activeTab');
           li(class=(activeTab === "#students-tab" ? 'active' : ''))
             a.students-tab-btn(href='#students-tab')
-              .small-details.text-center(data-i18n='teacher.students')
+              .small-details.text-center(data-i18n='courses.students')
           .tab-spacer
           li(class=(activeTab === "#course-progress-tab" ? 'active' : ''))
             a.course-progress-tab-btn(href='#course-progress-tab')
@@ -349,9 +363,9 @@ mixin allStudentsLevelProgressDot(progress, level, levelNumber)
   - context = _.merge(progress, { levelName: levelName, levelNumber: levelNumber, numStudents: view.students.length, practice: level.get('practice') })
   - link = null;
   - labelText = levelNumber;
+  - var course = view.state.get('selectedCourse');
+  - var courseInstance = course && view.classroom ? view.courseInstances.findWhere({ courseID: course.id, classroomID: view.classroom.id }) : null;
   if level.isLadder()
-    - var course = view.state.get('selectedCourse');
-    - var courseInstance = course && view.classroom ? view.courseInstances.findWhere({ courseID: course.id, classroomID: view.classroom.id }) : null;
     if courseInstance
       - link = view.urls.courseArenaLadder({level: level, courseInstance: courseInstance});
       - labelText = translate('teacher.view_arena_ladder');
@@ -359,7 +373,9 @@ mixin allStudentsLevelProgressDot(progress, level, levelNumber)
       - labelText = translate('courses.arena');
     - dotClass = 'navy progress-dot-lg';
   else if level.isProject()
-    - labelText = translate('teacher.project')
+    if courseInstance
+      - link = view.urls.courseProjectGallery({courseInstance: courseInstance})
+    - labelText = translate('teacher.view_project_gallery')
     - dotClass += ' progress-dot-lg';
   else if level.get('practice')
     if !(progress.completed || progress.started)
@@ -393,8 +409,10 @@ mixin studentLevelProgressDot(progress, level, levelNumber)
   else if level.isProject()
     if progress.started
       - link = view.urls.playDevLevel({level: level, session: progress.session, course: view.state.get('selectedCourse')});
-      - labelText = translate('teacher.view_student_project');
-      - dotClass = 'navy';
+      - labelText = translate('teacher.view_project');
+      if progress.completed && !progress.session.get('published')
+        - labelText += " " + translate('teacher.unpublished')
+      - dotClass = progress.completed ? 'navy' : (progress.started ? 'gold' : '');
     else
       - labelText = translate('teacher.project');
     - dotClass += ' progress-dot-lg';
@@ -492,4 +510,6 @@ mixin enrollmentStatusTab
                 span(data-i18n="teacher.full_license")
               else if student.prepaidType() === 'starter_license'
                 span(data-i18n="teacher.starter_license")
-
+          td.revoke-col
+            if status === 'enrolled' && student.prepaidType() === 'course'
+              button.revoke-student-button.btn.btn-burgundy-alt(data-i18n="teacher.revoke_license", data-user-id=student.id)

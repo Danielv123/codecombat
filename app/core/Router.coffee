@@ -1,6 +1,11 @@
 go = (path, options) -> -> @routeDirectly path, arguments, options
-redirect = (path) -> -> @navigate(path + document.location.search, { trigger: true, replace: true })
+
+redirect = (path) -> ->
+  delete window.alreadyLoadedView
+  @navigate(path + document.location.search, { trigger: true, replace: true })
+
 utils = require './utils'
+ViewLoadTimer = require 'core/ViewLoadTimer'
 
 module.exports = class CocoRouter extends Backbone.Router
 
@@ -16,6 +21,9 @@ module.exports = class CocoRouter extends Backbone.Router
         return @routeDirectly 'play/CampaignView', ['picoctf'], {}
       if utils.getQueryVariable 'hour_of_code'
         return @navigate "/play?hour_of_code=true", {trigger: true, replace: true}
+      unless me.isAnonymous() or me.isStudent() or me.isTeacher() or me.isAdmin() or me.hasSubscription()
+        delete window.alreadyLoadedView
+        return @navigate "/premium", {trigger: true, replace: true}
       return @routeDirectly('HomeView', [])
 
     'about': go('AboutView')
@@ -24,7 +32,7 @@ module.exports = class CocoRouter extends Backbone.Router
     'account/settings': go('account/AccountSettingsRootView')
     'account/unsubscribe': go('account/UnsubscribeView')
     'account/payments': go('account/PaymentsView')
-    'account/subscription': go('account/SubscriptionView')
+    'account/subscription': go('account/SubscriptionView', { redirectStudents: true, redirectTeachers: true })
     'account/invoices': go('account/InvoicesView')
     'account/prepaid': go('account/PrepaidView')
 
@@ -46,6 +54,9 @@ module.exports = class CocoRouter extends Backbone.Router
     'admin/user-code-problems': go('admin/UserCodeProblemsView')
     'admin/pending-patches': go('admin/PendingPatchesView')
     'admin/codelogs': go('admin/CodeLogsView')
+    'admin/skipped-contacts': go('admin/SkippedContactsView')
+    'admin/outcomes-report-result': go('admin/OutcomeReportResultView')
+    'admin/outcomes-report': go('admin/OutcomesReportView')
 
     'artisans': go('artisans/ArtisansView')
 
@@ -107,6 +118,8 @@ module.exports = class CocoRouter extends Backbone.Router
     'editor/thang-tasks': go('editor/ThangTasksView')
     'editor/verifier': go('editor/verifier/VerifierView')
     'editor/verifier/:levelID': go('editor/verifier/VerifierView')
+    'editor/i18n-verifier/:levelID': go('editor/verifier/i18nVerifierView')
+    'editor/i18n-verifier': go('editor/verifier/i18nVerifierView')
     'editor/course': go('editor/course/CourseSearchView')
     'editor/course/:courseID': go('editor/course/CourseEditView')
 
@@ -125,11 +138,17 @@ module.exports = class CocoRouter extends Backbone.Router
     'i18n/campaign/:handle': go('i18n/I18NEditCampaignView')
     'i18n/poll/:handle': go('i18n/I18NEditPollView')
     'i18n/course/:handle': go('i18n/I18NEditCourseView')
+    'i18n/product/:handle': go('i18n/I18NEditProductView')
 
     'identify': go('user/IdentifyView')
     'il-signup': go('account/IsraelSignupView')
 
     'legal': go('LegalView')
+
+    'logout': 'logout'
+
+    'paypal/subscribe-callback': go('play/CampaignView')
+    'paypal/cancel-callback': go('account/SubscriptionView')
 
     'play(/)': go('play/CampaignView', { redirectStudents: true, redirectTeachers: true }) # extra slash is to get Facebook app to work
     'play/ladder/:levelID/:leagueType/:leagueID': go('ladder/LadderView')
@@ -139,7 +158,10 @@ module.exports = class CocoRouter extends Backbone.Router
     'play/game-dev-level/:levelID/:sessionID': go('play/level/PlayGameDevLevelView')
     'play/web-dev-level/:levelID/:sessionID': go('play/level/PlayWebDevLevelView')
     'play/spectate/:levelID': go('play/SpectateView')
-    'play/:map': go('play/CampaignView')
+    'play/:map': go('play/CampaignView', { redirectTeachers: true })
+
+    'premium': go('PremiumFeaturesView')
+    'Premium': go('PremiumFeaturesView')
 
     'preview': go('HomeView')
 
@@ -149,8 +171,11 @@ module.exports = class CocoRouter extends Backbone.Router
     'seen': go('HomeView')
     'SEEN': go('HomeView')
 
+    'sunburst': go('HomeView')
+
     'students': go('courses/CoursesView', { redirectTeachers: true })
     'students/update-account': go('courses/CoursesUpdateAccountView', { redirectTeachers: true })
+    'students/project-gallery/:courseInstanceID': go('courses/ProjectGalleryView')
     'students/:classroomID': go('courses/ClassroomView', { redirectTeachers: true, studentsOnly: true })
     'students/:courseID/:courseInstanceID': go('courses/CourseDetailsView', { redirectTeachers: true, studentsOnly: true })
     'teachers': redirect('/teachers/classes')
@@ -165,6 +190,7 @@ module.exports = class CocoRouter extends Backbone.Router
     'teachers/freetrial': go('teachers/RequestQuoteView', { redirectStudents: true })
     'teachers/quote': redirect('/teachers/demo')
     'teachers/resources': go('teachers/ResourceHubView', { redirectStudents: true })
+    'teachers/resources/ap-cs-principles': go('teachers/ApCsPrinciplesView', { redirectStudents: true })
     'teachers/resources/:name': go('teachers/MarkdownResourceView', { redirectStudents: true })
     'teachers/signup': ->
       return @routeDirectly('teachers/CreateTeacherAccountView', []) if me.isAnonymous()
@@ -191,10 +217,14 @@ module.exports = class CocoRouter extends Backbone.Router
     @navigate e, {trigger: true}
 
   routeDirectly: (path, args=[], options={}) ->
+    if window.alreadyLoadedView
+      path = window.alreadyLoadedView
+
+    @viewLoad = new ViewLoadTimer() unless options.recursive
     if options.redirectStudents and me.isStudent() and not me.isAdmin()
-      return @navigate('/students', {trigger: true, replace: true})
+      return @redirectHome()
     if options.redirectTeachers and me.isTeacher() and not me.isAdmin()
-      return @navigate('/teachers', {trigger: true, replace: true})
+      return @redirectHome()
     if options.teachersOnly and not (me.isTeacher() or me.isAdmin())
       return @routeDirectly('teachers/RestrictedToTeachersView')
     if options.studentsOnly and not (me.isStudent() or me.isAdmin())
@@ -208,23 +238,43 @@ module.exports = class CocoRouter extends Backbone.Router
 
     # TODO: Combine these two?
     if features.playViewsOnly and not (_.string.startsWith(document.location.pathname, '/play') or document.location.pathname is '/admin')
+      delete window.alreadyLoadedView
       return @navigate('/play', { trigger: true, replace: true })
-    path = 'play/CampaignView' if features.playOnly and not /^(views)?\/?play/.test(path)
-    
+    if features.playOnly and not /^(views)?\/?play/.test(path)
+      delete window.alreadyLoadedView
+      path = 'play/CampaignView'
+
     path = "views/#{path}" if not _.string.startsWith(path, 'views/')
     ViewClass = @tryToLoadModule path
     if not ViewClass and application.moduleLoader.load(path)
       @listenToOnce application.moduleLoader, 'load-complete', ->
+        options.recursive = true
         @routeDirectly(path, args, options)
       return
     return go('NotFoundView') if not ViewClass
     view = new ViewClass(options, args...)  # options, then any path fragment args
     view.render()
-    @openView(view)
+    if window.alreadyLoadedView
+      console.log "Need to merge view"
+      delete window.alreadyLoadedView
+      @mergeView(view)
+    else
+      @openView(view)
+
+    @viewLoad.setView(view)
+    @viewLoad.record()
+
+  redirectHome: ->
+    delete window.alreadyLoadedView
+    homeUrl = switch
+      when me.isStudent() then '/students'
+      when me.isTeacher() then '/teachers'
+      else '/'
+    @navigate(homeUrl, {trigger: true, replace: true})
 
   tryToLoadModule: (path) ->
     try
-      return require(path)
+      return window.require(path)
     catch error
       if error.toString().search('Cannot find module "' + path + '" from') is -1
         throw error
@@ -232,11 +282,25 @@ module.exports = class CocoRouter extends Backbone.Router
   openView: (view) ->
     @closeCurrentView()
     $('#page-container').empty().append view.el
-    window.currentView = view
     @activateTab()
+    @didOpenView view
+
+  mergeView: (view) ->
+    unless view.mergeWithPrerendered?
+      return @openView(view)
+
+    target = $('#page-container>div')
+    view.mergeWithPrerendered target
+    view.setElement target[0]
+    @didOpenView view
+
+  didOpenView: (view) ->
+    window.currentView = view
     view.afterInsert()
     view.didReappear()
     @path = document.location.pathname + document.location.search
+    console.log "Did-Load-Route"
+    @trigger 'did-load-route'
 
   closeCurrentView: ->
     if window.currentView?.reloadOnClose
@@ -272,12 +336,13 @@ module.exports = class CocoRouter extends Backbone.Router
   _trackPageView: ->
     window.tracker?.trackPageView()
 
-  onNavigate: (e) ->
+  onNavigate: (e, recursive=false) ->
+    @viewLoad = new ViewLoadTimer() unless recursive
     if _.isString e.viewClass
       ViewClass = @tryToLoadModule e.viewClass
       if not ViewClass and application.moduleLoader.load(e.viewClass)
         @listenToOnce application.moduleLoader, 'load-complete', ->
-          @onNavigate(e)
+          @onNavigate(e, true)
         return
       e.viewClass = ViewClass
 
@@ -292,8 +357,11 @@ module.exports = class CocoRouter extends Backbone.Router
       view = new e.viewClass(args...)
       view.render()
       @openView view
+      @viewLoad.setView(view)
     else
       @openView e.view
+      @viewLoad.setView(e.view)
+    @viewLoad.record()
 
   navigate: (fragment, options) ->
     super fragment, options
@@ -301,3 +369,7 @@ module.exports = class CocoRouter extends Backbone.Router
 
   reload: ->
     document.location.reload()
+
+  logout: ->
+    me.logout()
+    @navigate('/', { trigger: true })

@@ -9,6 +9,7 @@ ActivateLicensesModal = require 'views/courses/ActivateLicensesModal'
 EditStudentModal = require 'views/teachers/EditStudentModal'
 RemoveStudentModal = require 'views/courses/RemoveStudentModal'
 CoursesNotAssignedModal = require './CoursesNotAssignedModal'
+CourseNagSubview = require 'views/teachers/CourseNagSubview'
 
 Campaigns = require 'collections/Campaigns'
 Classroom = require 'models/Classroom'
@@ -42,6 +43,7 @@ module.exports = class TeacherClassView extends RootView
     'click .remove-student-link': 'onClickRemoveStudentLink'
     'click .assign-student-button': 'onClickAssignStudentButton'
     'click .enroll-student-button': 'onClickEnrollStudentButton'
+    'click .revoke-student-button': 'onClickRevokeStudentButton'
     'click .assign-to-selected-students': 'onClickBulkAssign'
     'click .export-student-progress-btn': 'onClickExportStudentProgress'
     'click .select-all': 'onClickSelectAll'
@@ -92,7 +94,7 @@ module.exports = class TeacherClassView extends RootView
     @sortedCourses = []
 
     @prepaids = new Prepaids()
-    @supermodel.trackRequest @prepaids.fetchByCreator(me.id)
+    @supermodel.trackRequest @prepaids.fetchMineAndShared()
 
     @students = new Users()
     @classroom.sessions = new LevelSessions()
@@ -194,6 +196,8 @@ module.exports = class TeacherClassView extends RootView
 
   afterRender: ->
     super(arguments...)
+    @courseNagSubview = new CourseNagSubview()
+    @insertSubView(@courseNagSubview)
     $('.progress-dot, .btn-view-project-level').each (i, el) ->
       dot = $(el)
       dot.tooltip({
@@ -252,6 +256,9 @@ module.exports = class TeacherClassView extends RootView
   onClickEditClassroom: (e) ->
     return unless me.id is @classroom.get('ownerID') # May be viewing page as admin
     window.tracker?.trackEvent 'Teachers Class Edit Class Started', category: 'Teachers', classroomID: @classroom.id, ['Mixpanel']
+    @promptToEdit()
+
+  promptToEdit: () ->
     classroom = @classroom
     modal = new ClassroomSettingsModal({ classroom: classroom })
     @openModalView(modal)
@@ -343,11 +350,11 @@ module.exports = class TeacherClassView extends RootView
     courseLabelsArray = helper.courseLabelsArray(courses)
     for course, index in courses
       courseLabels += "#{courseLabelsArray[index]} Levels,#{courseLabelsArray[index]} Playtime,"
-    csvContent = "data:text/csv;charset=utf-8,Name,Username,Email,Total Levels, Total Playtime,#{courseLabels}Concepts\n"
+    csvContent = "Name,Username,Email,Total Levels,Total Playtime,#{courseLabels}Concepts\n"
     levelCourseIdMap = {}
     levelPracticeMap = {}
     language = @classroom.get('aceConfig')?.language
-    for trimCourse in @classroom.get('courses')
+    for trimCourse in @classroom.getSortedCourses()
       for trimLevel in trimCourse.levels
         continue if language and trimLevel.primerLanguage is language
         if trimLevel.practice
@@ -356,7 +363,7 @@ module.exports = class TeacherClassView extends RootView
         levelCourseIdMap[trimLevel.original] = trimCourse._id
     for student in @students.models
       concepts = []
-      for trimCourse in @classroom.get('courses')
+      for trimCourse in @classroom.getSortedCourses()
         course = @courses.get(trimCourse._id)
         instance = @courseInstances.findWhere({ courseID: course.id, classroomID: @classroom.id })
         if instance and instance.hasMember(student)
@@ -383,7 +390,9 @@ module.exports = class TeacherClassView extends RootView
       for course in @sortedCourses
         courseCountsMap[course._id] ?= {levels: 0, playtime: 0}
       courseCounts = []
-      for courseID, data of courseCountsMap
+      for course in @sortedCourses
+        courseID = course._id
+        data = courseCountsMap[courseID]
         courseCounts.push
           id: courseID
           levels: data.levels
@@ -398,8 +407,8 @@ module.exports = class TeacherClassView extends RootView
           courseCountsString += "#{moment.duration(counts.playtime, 'seconds').humanize()},"
       csvContent += "#{student.broadName()},#{student.get('name')},#{student.get('email') or ''},#{levels},#{playtimeString},#{courseCountsString}\"#{conceptsString}\"\n"
     csvContent = csvContent.substring(0, csvContent.length - 1)
-    encodedUri = encodeURI(csvContent)
-    window.open(encodedUri)
+    file = new Blob([csvContent], {type: 'text/csv;charset=utf-8'})
+    saveAs(file, 'CodeCombat.csv')
 
   onClickAssignStudentButton: (e) ->
     return unless me.id is @classroom.get('ownerID') # May be viewing page as admin
@@ -443,24 +452,23 @@ module.exports = class TeacherClassView extends RootView
 
     # Automatically apply licenses to students if necessary
     .then =>
+      # Find the prepaids and users we're acting on (for both starter and full license cases)
       availablePrepaids = @prepaids.filter((prepaid) -> prepaid.status() is 'available' and prepaid.includesCourse(courseID))
       unenrolledStudents = _(members)
         .map((userID) => @students.get(userID))
-        .filter((user) => user.prepaidStatus() isnt 'enrolled')
+        .filter((user) => not user.isEnrolled() or not user.prepaidIncludesCourse(courseID))
         .value()
       totalSpotsAvailable = _.reduce(prepaid.openSpots() for prepaid in availablePrepaids, (val, total) -> val + total) or 0
 
-      availableFullLicenses = @prepaids.filter((prepaid) -> prepaid.status() is 'available' and prepaid.get('type') is 'course')
-      numStudentsWithoutFullLicenses = _(members)
-        .map((userID) => @students.get(userID))
-        .filter((user) => user.prepaidType() isnt 'course' or user.prepaidStatus() isnt 'enrolled')
-        .size()
-      numFullLicensesAvailable = _.reduce(prepaid.openSpots() for prepaid in availableFullLicenses, (val, total) -> val + total) or 0
-      if courseID not in STARTER_LICENSE_COURSE_IDS
-        canAssignCourses = numFullLicensesAvailable >= numStudentsWithoutFullLicenses
-      else
-        canAssignCourses = totalSpotsAvailable >= _.size(unenrolledStudents)
+      canAssignCourses = totalSpotsAvailable >= _.size(unenrolledStudents)
       if not canAssignCourses
+        # These ones just matter for display
+        availableFullLicenses = @prepaids.filter((prepaid) -> prepaid.status() is 'available' and prepaid.get('type') is 'course')
+        numStudentsWithoutFullLicenses = _(members)
+          .map((userID) => @students.get(userID))
+          .filter((user) => user.prepaidType() isnt 'course' or not user.isEnrolled())
+          .size()
+        numFullLicensesAvailable = _.reduce(prepaid.openSpots() for prepaid in availableFullLicenses, (val, total) -> val + total) or 0
         modal = new CoursesNotAssignedModal({
           selected: members.length
           numStudentsWithoutFullLicenses
@@ -476,6 +484,7 @@ module.exports = class TeacherClassView extends RootView
       remainingSpots = totalSpotsAvailable - numberEnrolled
 
       requests = []
+
       for prepaid in availablePrepaids
         for i in _.range(prepaid.openSpots())
           break unless _.size(unenrolledStudents) > 0
@@ -527,6 +536,23 @@ module.exports = class TeacherClassView extends RootView
       text = if e instanceof Error then 'Runtime error' else e.responseJSON?.message or e.message or $.i18n.t('loading_error.unknown')
       noty { text, layout: 'center', type: 'error', killer: true, timeout: 5000 }
 
+  onClickRevokeStudentButton: (e) ->
+    button = $(e.currentTarget)
+    userID = button.data('user-id')
+    user = @students.get(userID)
+    s = $.i18n.t('teacher.revoke_confirm').replace('{{student_name}}', user.broadName())
+    return unless confirm(s)
+    prepaid = user.makeCoursePrepaid()
+    button.text($.i18n.t('teacher.revoking'))
+    prepaid.revoke(user, {
+      success: =>
+        user.unset('coursePrepaid')
+      error: (prepaid, jqxhr) =>
+        msg = jqxhr.responseJSON.message
+        noty text: msg, layout: 'center', type: 'error', killer: true, timeout: 3000
+      complete: => @render()
+    })
+    
   onClickSelectAll: (e) ->
     e.preventDefault()
     checkboxStates = _.clone @state.get('checkboxStates')
@@ -580,4 +606,4 @@ module.exports = class TeacherClassView extends RootView
       when 'not-enrolled' then $.i18n.t('teacher.status_not_enrolled')
       when 'enrolled' then (if expires then $.i18n.t('teacher.status_enrolled') else '-')
       when 'expired' then $.i18n.t('teacher.status_expired')
-    return string.replace('{{date}}', moment(expires).utc().format('l'))
+    return string.replace('{{date}}', moment(expires).utc().format('ll'))

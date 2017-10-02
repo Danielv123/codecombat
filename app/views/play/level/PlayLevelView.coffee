@@ -34,6 +34,7 @@ LevelPlaybackView = require './LevelPlaybackView'
 GoalsView = require './LevelGoalsView'
 LevelFlagsView = require './LevelFlagsView'
 GoldView = require './LevelGoldView'
+GameDevTrackView = require './GameDevTrackView'
 DuelStatsView = require './DuelStatsView'
 VictoryModal = require './modal/VictoryModal'
 HeroVictoryModal = require './modal/HeroVictoryModal'
@@ -46,6 +47,8 @@ HintsView = require './HintsView'
 HintsState = require './HintsState'
 WebSurfaceView = require './WebSurfaceView'
 SpellPaletteView = require './tome/SpellPaletteView'
+
+require 'game-libraries'
 
 PROFILE_ME = false
 
@@ -86,6 +89,12 @@ module.exports = class PlayLevelView extends RootView
     'click #stop-real-time-playback-button': -> Backbone.Mediator.publish 'playback:stop-real-time-playback', {}
     'click #fullscreen-editor-background-screen': (e) -> Backbone.Mediator.publish 'tome:toggle-maximize', {}
     'click .contact-link': 'onContactClicked'
+    'click': 'onClick'
+
+  onClick: ->
+    # workaround to get users out of permanent idle status
+    if application.userIsIdle
+      application.idleTracker.onVisible()
 
   shortcuts:
     'ctrl+s': 'onCtrlS'
@@ -145,6 +154,16 @@ module.exports = class PlayLevelView extends RootView
 
   onLevelLoaded: (e) ->
     return if @destroyed
+    if _.all([
+      (me.isStudent() or me.isTeacher()),
+      not @courseID,
+      not e.level.isType('course-ladder')
+
+      # TODO: Add a general way for standalone levels to be accessed by students, teachers
+      e.level.get('slug') isnt 'peasants-and-munchkins' 
+    ])
+      return _.defer -> application.router.redirectHome()
+
     unless e.level.isType('web-dev')
       @god = new God({
         @gameUIState
@@ -298,7 +317,8 @@ module.exports = class PlayLevelView extends RootView
     @insertSubView new LevelPlaybackView session: @session, level: @level unless @level.isType('web-dev')
     @insertSubView new GoalsView {level: @level}
     @insertSubView new LevelFlagsView levelID: @levelID, world: @world if @$el.hasClass 'flags'
-    @insertSubView new GoldView {} unless @level.get('slug') in ['wakka-maul'] unless @level.isType('web-dev')
+    @insertSubView new GoldView {} unless @level.get('slug') in ['wakka-maul'] unless @level.isType('web-dev') or @level.isType('game-dev')
+    @insertSubView new GameDevTrackView {} if @level.isType('game-dev')
     @insertSubView new HUDView {level: @level} unless @level.isType('web-dev')
     @insertSubView new LevelDialogueView {level: @level, sessionID: @session.id}
     @insertSubView new ChatView levelID: @levelID, sessionID: @session.id, session: @session
@@ -375,7 +395,24 @@ module.exports = class PlayLevelView extends RootView
       }}
     else if e.level.get('slug') in ['ace-of-coders', 'elemental-wars']
       goliath = '55e1a6e876cb0948c96af9f8'
-      e.session.set 'heroConfig', {"thangType":goliath,"inventory":{"eyes":"53eb99f41a100989a40ce46e","neck":"54693274a2b1f53ce79443c9","wrists":"54693797a2b1f53ce79443e9","feet":"546d4d8e9df4a17d0d449acd","minion":"54eb5bf649fa2d5c905ddf4a","programming-book":"557871261ff17fef5abee3ee"}}
+      e.session.set 'heroConfig', {"thangType":goliath,"inventory":{
+        "eyes":"53eb99f41a100989a40ce46e","neck":"54693274a2b1f53ce79443c9","wrists":"54693797a2b1f53ce79443e9","feet":"546d4d8e9df4a17d0d449acd","minion":"54eb5bf649fa2d5c905ddf4a","programming-book":"557871261ff17fef5abee3ee"
+      }}
+    else if e.level.get('slug') in ['tesla-tesoro']
+      assassin = '566a2202e132c81f00f38c81'
+      e.session.set 'heroConfig', {"thangType":assassin,"inventory":{
+        "eyes": "546941fda2b1f53ce794441d",
+        "feet": "546d4d8e9df4a17d0d449acd",
+        "minion": "54eb5d1649fa2d5c905ddf52",
+        "neck": "54693363a2b1f53ce79443d1",
+        "wrists": "54693830a2b1f53ce79443f1",
+        "programming-book": "557871261ff17fef5abee3ee",
+        "left-ring": "5441c35c4e9aeb727cc9711d",
+        "torso": "546d3d549df4a17d0d449a47",
+        "head": "546d47c09df4a17d0d449a6f",
+        "left-hand": "54eb528449fa2d5c905ddf12",
+        "right-hand": "544d86318494308424f564e8"
+      }}
     else if e.level.get('slug') is 'the-battle-of-sky-span'
       wizard = '52fc1460b2b91c0d5a7b6af3'
       e.session.set 'heroConfig', {"thangType":wizard,"inventory":{}}
@@ -386,6 +423,8 @@ module.exports = class PlayLevelView extends RootView
       @setupManager?.destroy()
       @setupManager = new LevelSetupManager({supermodel: @supermodel, level: e.level, levelID: @levelID, parent: @, session: e.session, courseID: @courseID, courseInstanceID: @courseInstanceID})
       @setupManager.open()
+
+
 
   onLoaded: ->
     _.defer => @onLevelLoaderLoaded()
@@ -432,6 +471,9 @@ module.exports = class PlayLevelView extends RootView
     bounds = [{x: worldBounds.left, y: worldBounds.top}, {x: worldBounds.right, y: worldBounds.bottom}]
     @surface.camera.setBounds(bounds)
     @surface.camera.zoomTo({x: 0, y: 0}, 0.1, 0)
+    @listenTo @surface, 'resize', ({ height }) ->
+      @$('#stop-real-time-playback-button').css({ top: height - 30 })
+      @$('#how-to-play-game-dev-panel').css({ height })
 
   findPlayerNames: ->
     return {} unless @level.isType('ladder', 'hero-ladder', 'course-ladder')
@@ -446,7 +488,7 @@ module.exports = class PlayLevelView extends RootView
     return unless @surface? or @webSurface?
     @loadingView.showReady()
     @trackLevelLoadEnd()
-    if window.currentModal and not window.currentModal.destroyed and window.currentModal.constructor isnt VictoryModal
+    if window.currentModal and not window.currentModal.destroyed and [VictoryModal, CourseVictoryModal].indexOf(window.currentModal.constructor) is -1
       return Backbone.Mediator.subscribeOnce 'modal:closed', @onLevelStarted, @
     @surface?.showLevel()
     Backbone.Mediator.publish 'level:set-time', time: 0
@@ -628,6 +670,7 @@ module.exports = class PlayLevelView extends RootView
         label: @level.get('name')
         levelID: @levelID
         ls: @session?.get('_id')
+        playtime: @session?.get('playtime')
       application.tracker?.trackTiming victoryTime, 'Level Victory Time', @levelID, @levelID
 
   showVictory: (options={}) ->
@@ -691,6 +734,7 @@ module.exports = class PlayLevelView extends RootView
     thangTypes = @supermodel.getModels(ThangType)
     startFrame = @lastWorldFramesLoaded ? 0
     finishedLoading = @world.frames.length is @world.totalFrames
+    @realTimePlaybackWaitingForFrames = false
     if finishedLoading
       @lastWorldFramesLoaded = 0
       if @waitingForSubmissionComplete
@@ -702,19 +746,22 @@ module.exports = class PlayLevelView extends RootView
       continue unless thangType = _.find thangTypes, (m) -> m.get('name') is spriteName
       continue unless sound = AudioPlayer.soundForDialogue message, thangType.get('soundTriggers')
       AudioPlayer.preloadSoundReference sound
+    @session.updateKeyValueDb(e.keyValueDb) if @level.isType('game-dev')
 
   # Real-time playback
   onRealTimePlaybackStarted: (e) ->
     @$el.addClass('real-time').focus()
     @$('#how-to-play-game-dev-panel').removeClass('hide') if @level.isType('game-dev')
     @onWindowResize()
+    @realTimePlaybackWaitingForFrames = true
 
   onRealTimePlaybackEnded: (e) ->
     return unless @$el.hasClass 'real-time'
     @$('#how-to-play-game-dev-panel').addClass('hide') if @level.isType('game-dev')
     @$el.removeClass 'real-time'
     @onWindowResize()
-    if @world.frames.length is @world.totalFrames and not @surface.countdownScreen?.showing
+    @session.saveKeyValueDb() if @level.isType('game-dev')
+    if @world.frames.length is @world.totalFrames and not @surface.countdownScreen?.showing and not @realTimePlaybackWaitingForFrames
       _.delay @onSubmissionComplete, 750  # Wait for transition to end.
     else
       @waitingForSubmissionComplete = true
@@ -763,3 +810,6 @@ module.exports = class PlayLevelView extends RootView
       @setupManager?.destroy()
       @setupManager = new LevelSetupManager({supermodel: @supermodel, level: @level, levelID: @levelID, parent: @, session: @session, hadEverChosenHero: true})
       @setupManager.open()
+
+  getLoadTrackingTag: () ->
+    @level?.get 'slug'

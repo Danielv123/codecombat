@@ -23,6 +23,7 @@ ClassroomSchema.statics.editableProperties = [
   'ageRangeMin'
   'ageRangeMax'
   'archived'
+  'settings'
 ]
 ClassroomSchema.statics.postEditableProperties = []
 
@@ -71,7 +72,16 @@ ClassroomSchema.methods.generateCoursesData = co.wrap ({isAdmin}) ->
     for level in levels
       continue if classLanguage and level.primerLanguage is classLanguage
       levelData = { original: mongoose.Types.ObjectId(level.original) }
-      _.extend(levelData, _.pick(level, 'type', 'slug', 'name', 'practice', 'practiceThresholdMinutes', 'primerLanguage', 'shareable'))
+      _.extend(levelData, _.pick(level, 
+        'type',
+        'slug',
+        'name', 
+        'practice', 
+        'practiceThresholdMinutes',
+        'primerLanguage',
+        'shareable',
+        'position'
+      ))
       courseData.levels.push(levelData)
     coursesData.push(courseData)
   coursesData
@@ -120,16 +130,60 @@ ClassroomSchema.methods.setUpdatedCourses = co.wrap ({isAdmin, addNewCoursesOnly
     existingCourseMap = _.zipObject(existingCourseIds, coursesData)
     coursesData = _.map(newestCoursesData, (newCourseData) -> existingCourseMap[newCourseData._id+''] or newCourseData)
   @set('courses', coursesData)
+  
+ClassroomSchema.methods.addMember = (user) ->
+  # fires update, and adds to this local copy, or resolves immediately if the user is already part of the classroom
+  members = _.clone(@get('members'))
+  if _.any(members, (memberID) -> memberID.equals(user._id))
+    return Promise.resolve()
+  update = { $push: { members : user._id }}
+  members.push user._id
+  @set('members', members)
+  return @update(update)
+  
+ClassroomSchema.methods.fetchSessionsForMembers = co.wrap (members) ->
+  CourseInstance = require('./CourseInstance')
+  LevelSession = require('./LevelSession')
+  
+  courseLevelsMap = {}
+  codeLanguage = @get('aceConfig.language')
+  for course in @get('courses') ? []
+    courseLevelsMap[course._id.toHexString()] = _.map(course.levels, (l) ->
+      {'level.original':l.original?.toHexString(), codeLanguage: l.primerLanguage or codeLanguage}
+    )
+  courseInstances = yield CourseInstance.find({classroomID: @_id}).select('_id courseID members').lean()
+  memberCoursesMap = {}
+  for courseInstance in courseInstances
+    for userID in courseInstance.members ? []
+      memberCoursesMap[userID.toHexString()] ?= []
+      memberCoursesMap[userID.toHexString()].push(courseInstance.courseID)
+  dbqs = []
+  select = 'state.complete level creator playtime changed created dateFirstCompleted submitted published'
+  for member in members
+    $or = []
+    for courseID in memberCoursesMap[member.toHexString()] ? []
+      for subQuery in courseLevelsMap[courseID.toHexString()] ? []
+        $or.push(_.assign({creator: member.toHexString()}, subQuery))
+    if $or.length
+      query = { $or }
+      dbqs.push(LevelSession.find(query).select(select).lean().exec())
+  results = yield dbqs
+  return _.flatten(results)
 
 ClassroomSchema.statics.jsonSchema = jsonSchema
 
 ClassroomSchema.set('toObject', {
   transform: (doc, ret, options) ->
-    return ret unless options.req
-    user = options.req.user
-    unless user and (user.isAdmin() or user._id.equals(doc.get('ownerID')))
-      delete ret.code
-      delete ret.codeCamel
+    if options.req
+      user = options.req.user
+      unless user?.isAdmin() or user?._id.equals(doc.get('ownerID'))
+        delete ret.code
+        delete ret.codeCamel
+    if options.includeEnrolled
+      courseInstances = options.includeEnrolled
+      for course in ret.courses
+        courseInstance = _.find(courseInstances, (ci) -> ci.get('courseID').equals(course._id))
+        course.enrolled = courseInstance?.get('members') ? []
     return ret
 })
 

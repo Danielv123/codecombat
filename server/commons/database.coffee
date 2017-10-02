@@ -164,13 +164,16 @@ module.exports =
 
   getDocFromHandle: co.wrap (req, Model, options={}) ->
     dbq = Model.find()
-    handle = req.params.handle
+    handleName = options.handleName or 'handle'
+    handle = req.params[handleName]
     if not handle
-      return done(new errors.UnprocessableEntity('No handle provided.'))
+      throw new errors.UnprocessableEntity('No handle provided.')
     if @isID(handle)
       dbq.findOne({ _id: handle })
-    else
+    else if Model.schema.uses_coco_names
       dbq.findOne({ slug: handle })
+    else
+      throw new errors.UnprocessableEntity('Handle must be an ID.')
       
     if options.select
       dbq.select(options.select)
@@ -183,7 +186,7 @@ module.exports =
 
 
   hasAccessToDocument: (req, doc, method) ->
-    method = method or req.method
+    method = method or req.method.toLowerCase()
     return true if req.user?.isAdmin()
 
     if doc.schema.uses_coco_translation_coverage and method in ['post', 'put']
