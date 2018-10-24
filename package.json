@@ -42,7 +42,9 @@
     "multicore": "coffee multicore.coffee",
     "jasmine": "jasmine",
     "proxy": "COCO_PROXY='true' nodemon",
-    "coverage": "node ./bin/coverage.js"
+    "coverage": "node ./bin/coverage.js",
+    "snyk-protect": "snyk protect",
+    "prepare": "npm run snyk-protect"
   },
   "main": "index.js",
   "keywords": [
@@ -92,7 +94,7 @@
     "morgan": "^1.7.0",
     "mysql": "^2.11.1",
     "node-force-domain": "~0.1.0",
-    "node-gyp": "~0.13.0",
+    "node-gyp": "~3.4.0",
     "node-statsd": "^0.1.1",
     "passport": "0.1.x",
     "passport-local": "0.1.x",
@@ -108,7 +110,8 @@
     "tv4": "~1.0.16",
     "underscore.string": "2.3.x",
     "winston": "0.6.x",
-    "yamljs": "^0.2.8"
+    "yamljs": "^0.2.8",
+    "snyk": "^1.104.2"
   },
   "devDependencies": {
     "after-brunch": "0.0.5",
@@ -160,5 +163,6 @@
   "engines": {
     "node": "^5.1.1",
     "npm": "^3.0.0"
-  }
+  },
+  "snyk": true
 }
