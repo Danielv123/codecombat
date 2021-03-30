@@ -91,7 +91,7 @@
     "mongoose-cache": "https://github.com/nwinter/mongoose-cache/tarball/master",
     "morgan": "^1.7.0",
     "mysql": "^2.11.1",
-    "node-force-domain": "~0.1.0",
+    "node-force-domain": "~0.2.0",
     "node-gyp": "~0.13.0",
     "node-statsd": "^0.1.1",
     "passport": "0.1.x",
